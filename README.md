@@ -37,11 +37,53 @@ cd url-shortener
 make docker-run
 ```
 
+## Эндпоинты
+
+### Health Check
+```bash
+# Запрос
+curl http://localhost:8080/health
+
+# Ответ
+{"status":"OK"}
+```
+
 ### Создание короткой ссылки
 ```bash
 # Запрос
-curl -X POST -d '{"url":"https://google.com"}' http://localhost:8080/api/shorten
+curl -X POST http://localhost:8080/api/shorten \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://google.com"}'
 
 # Ответ
 {"short_url":"http://localhost:8080/l74pSP","original_url":"https://google.com"}
 ```
+
+### Получить все ссылки
+```bash
+# Запрос
+curl http://localhost:8080/api/urls
+
+# Ответ
+[{"short_url":"http://localhost:8080/l74pSP","original_url":"https://google.com"}]
+```
+
+### Редирект по короткой ссылке
+```bash
+# Запрос
+curl -i http://localhost:8080/l74pSP
+
+# Ответ (пример)
+HTTP/1.1 302 Found
+Location: https://google.com
+```
+
+### Метрики Prometheus
+```bash
+# Запрос
+curl http://localhost:8080/metrics
+```
+
+## Grafana Dashboard
+
+![Grafana Dashboard](docs/images/grafana.png)
