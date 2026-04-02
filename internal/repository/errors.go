@@ -3,5 +3,6 @@ package repository
 import "errors"
 
 var (
-	ErrNotFound = errors.New("url not found")
+	ErrNotFound = errors.New("not found")
+	ErrInternal = errors.New("internal server error")
 )

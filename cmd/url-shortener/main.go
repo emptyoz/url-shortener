@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,57 +12,56 @@ import (
 	"github.com/Vadim-Makhnev/url-shortener/internal/metrics"
 	"github.com/Vadim-Makhnev/url-shortener/internal/repository"
 	"github.com/Vadim-Makhnev/url-shortener/internal/service"
-	"github.com/joho/godotenv"
 )
 
 type application struct {
-	handler *handler.URLHandler
+	log     *slog.Logger
+	handler *handler.Handler
 }
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Fatalf(".env file not loaded: %v", err)
-	}
-
-	addr := flag.String("addr", ":"+os.Getenv("PORT"), "HTTP network address")
+	var configPath string
+	flag.StringVar(&configPath, "config", "./config.yaml", "application config path")
 	flag.Parse()
+
+	cfg := config.MustLoad(configPath)
 
 	metrics.InitMetrics()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
+	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	dbConfig := config.NewDatabaseConfig()
-	dbConnections, err := config.NewDatabaseConnections(dbConfig)
+	storage, err := repository.NewPostgreSQL(log, cfg.DBAddress)
 	if err != nil {
-		log.Fatalf("initialize database connections: %v", err)
+		log.Error("connect to PostgreSQL", "error", err)
+		os.Exit(1)
 	}
-	defer dbConnections.Close()
 
-	postgres := repository.NewRepositoryPostgres(
-		logger,
-		dbConnections.Postgres,
-	)
+	cache, err := repository.NewRedis(log, cfg.RedisURL)
+	if err != nil {
+		log.Error("connect to Redis", "error", err)
+		os.Exit(1)
+	}
 
-	redis := repository.NewRedisRepository(dbConnections.Redis)
-
-	urlService := service.NewService(postgres, redis, logger)
-
-	urlHandler := handler.NewHandler(urlService)
+	urlService := service.NewService(log, storage, cache)
+	urlHandler := handler.NewHandler(log, urlService, cfg.BaseURL)
 
 	app := application{
+		log:     log,
 		handler: urlHandler,
 	}
 
 	srv := &http.Server{
 		Handler:      app.routes(),
-		Addr:         *addr,
-		ErrorLog:     slog.NewLogLogger(logger.Handler(), slog.LevelError),
+		Addr:         cfg.SrvAddress,
+		ErrorLog:     slog.NewLogLogger(log.Handler(), slog.LevelError),
 		IdleTimeout:  time.Minute,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
 
+	log.Info("server starting", "address", srv.Addr)
+
 	err = srv.ListenAndServe()
-	logger.Error(err.Error())
-	log.Fatal(err)
+	log.Error("server connection", "address", srv.Addr, "error", err)
+	os.Exit(1)
 }

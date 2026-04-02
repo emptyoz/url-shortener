@@ -2,10 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand"
+	neturl "net/url"
 	"time"
 
+	"github.com/Vadim-Makhnev/url-shortener/internal/domain"
 	"github.com/Vadim-Makhnev/url-shortener/internal/repository"
 )
 
@@ -13,16 +17,10 @@ var (
 	defaultTimeout = 5 * time.Second
 )
 
-type URL struct {
-	ShortCode   string
-	OriginalURL string
-	CreatedAt   time.Time
-}
-
 type RepositoryPostgres interface {
-	CreateURL(shortCode, originalURL string) (*repository.URL, error)
+	CreateURL(shortCode, originalURL string) (*domain.URL, error)
 	GetURLByShortCode(shortCode string) (string, error)
-	GetAllURLS() ([]repository.URL, error)
+	GetAllURLS() ([]domain.URL, error)
 }
 
 type RepositoryRedis interface {
@@ -36,41 +34,50 @@ type URLService struct {
 	redis    RepositoryRedis
 }
 
-func NewService(repo RepositoryPostgres, redis RepositoryRedis, logger *slog.Logger) *URLService {
+func NewService(log *slog.Logger, repo RepositoryPostgres, redis RepositoryRedis) *URLService {
 	return &URLService{
+		logger:   log,
 		postgres: repo,
 		redis:    redis,
-		logger:   logger,
 	}
 }
 
-func (s *URLService) ShortenURL(originalURL string) (*URL, error) {
+func (s *URLService) ShortenURL(originalURL string) (*domain.URL, error) {
+	const op = "service.ShortenURL"
+
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
+
+	parsed, err := neturl.ParseRequestURI(originalURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("%s: %w", op, domain.ErrInvalidURL)
+	}
 
 	shortCode := generateShortCode()
 
 	url, err := s.postgres.CreateURL(shortCode, originalURL)
 	if err != nil {
 		s.logger.Error("ShortenURL:", "error", err)
-		return nil, err
+		return nil, fmt.Errorf("%s: create url: %w", op, domain.ErrInternal)
 	}
 
 	err = s.redis.Set(ctx, shortCode, originalURL)
 	if err != nil {
-		return nil, err
+		s.logger.Warn("ShortenURL cache set", "short_code", shortCode, "error", err)
+		return nil, fmt.Errorf("%s: cache set: %w", op, domain.ErrInternal)
 	}
 
-	domainURL := &URL{
+	domainURL := &domain.URL{
 		ShortCode:   url.ShortCode,
 		OriginalURL: url.OriginalURL,
-		CreatedAt:   url.CreatedAt,
 	}
 
 	return domainURL, nil
 }
 
 func (s *URLService) GetOriginalURL(shortCode string) (string, error) {
+	const op = "service.GetOriginalURL"
+
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -78,30 +85,37 @@ func (s *URLService) GetOriginalURL(shortCode string) (string, error) {
 	if err == nil {
 		return val, nil
 	}
+	if !errors.Is(err, repository.ErrNotFound) {
+		s.logger.Warn("GetOriginalURL cache get", "short_code", shortCode, "error", err)
+	}
 
 	url, err := s.postgres.GetURLByShortCode(shortCode)
 	if err != nil {
 		s.logger.Error("GetOriginalURL:", "error", err)
-		return "", err
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", fmt.Errorf("%s: %w", op, domain.ErrURLNotFound)
+		}
+		return "", fmt.Errorf("%s: %w", op, domain.ErrInternal)
 	}
 
 	return url, nil
 }
 
-func (s *URLService) GetAllURLS() ([]URL, error) {
+func (s *URLService) GetAllURLS() ([]domain.URL, error) {
+	const op = "service.GetAllURLs"
+
 	urls, err := s.postgres.GetAllURLS()
 	if err != nil {
 		s.logger.Error("GetAllURLS:", "error", err)
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", op, domain.ErrInternal)
 	}
 
-	var res []URL
+	var res []domain.URL
 
 	for _, url := range urls {
-		res = append(res, URL{
+		res = append(res, domain.URL{
 			ShortCode:   url.ShortCode,
 			OriginalURL: url.OriginalURL,
-			CreatedAt:   url.CreatedAt,
 		})
 	}
 

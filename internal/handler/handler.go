@@ -3,21 +3,20 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
-	"os"
-	"time"
+	"net/url"
 
+	"github.com/Vadim-Makhnev/url-shortener/internal/domain"
 	"github.com/Vadim-Makhnev/url-shortener/internal/metrics"
-	"github.com/Vadim-Makhnev/url-shortener/internal/repository"
-	"github.com/Vadim-Makhnev/url-shortener/internal/service"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 type URLService interface {
-	ShortenURL(originalURL string) (*service.URL, error)
+	ShortenURL(originalURL string) (*domain.URL, error)
 	GetOriginalURL(shortCode string) (string, error)
-	GetAllURLS() ([]service.URL, error)
+	GetAllURLS() ([]domain.URL, error)
 }
 
 type ShortenRequest struct {
@@ -25,20 +24,27 @@ type ShortenRequest struct {
 }
 
 type URLResponse struct {
-	ShortURL    string    `json:"short_url"`
-	OriginalURL string    `json:"original_url"`
-	CreatedAt   time.Time `json:"created_at"`
+	ShortURL    string `json:"short_url"`
+	OriginalURL string `json:"original_url"`
 }
 
-type URLHandler struct {
+// Handler
+type Handler struct {
+	log     *slog.Logger
 	service URLService
+	baseUrl string
 }
 
-func NewHandler(service URLService) *URLHandler {
-	return &URLHandler{service: service}
+// Handler constructor
+func NewHandler(log *slog.Logger, service URLService, baseUrl string) *Handler {
+	return &Handler{
+		log:     log,
+		service: service,
+		baseUrl: baseUrl,
+	}
 }
 
-func (h *URLHandler) ShortenURL(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ShortenURL(w http.ResponseWriter, r *http.Request) {
 	metrics.URLShortenRequests.Inc()
 	timer := prometheus.NewTimer(metrics.RequestDuration)
 	defer timer.ObserveDuration()
@@ -54,24 +60,35 @@ func (h *URLHandler) ShortenURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url, err := h.service.ShortenURL(req.URL)
+	urls, err := h.service.ShortenURL(req.URL)
 	if err != nil {
+		if errors.Is(err, domain.ErrInvalidURL) {
+			http.Error(w, "invalid url", http.StatusBadRequest)
+			return
+		}
 		http.Error(w, "failed to shorten URL", http.StatusInternalServerError)
 		return
 	}
 
-	var res URLResponse
+	path, err := url.JoinPath(h.baseUrl, urls.ShortCode)
+	if err != nil {
+		http.Error(w, "create short url path", http.StatusInternalServerError)
+		return
+	}
 
-	res.ShortURL = os.Getenv("BASE_URL") + "/" + url.ShortCode
-	res.CreatedAt = url.CreatedAt
-	res.OriginalURL = url.OriginalURL
+	res := URLResponse{
+		ShortURL:    path,
+		OriginalURL: urls.OriginalURL,
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(res)
+	if err := json.NewEncoder(w).Encode(res); err != nil {
+		h.log.Error("endcode struct", "error", err)
+	}
 }
 
-func (h *URLHandler) RedirectURL(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) RedirectURL(w http.ResponseWriter, r *http.Request) {
 	metrics.URLRedirectRequests.Inc()
 	timer := prometheus.NewTimer(metrics.RequestDuration)
 	defer timer.ObserveDuration()
@@ -81,7 +98,7 @@ func (h *URLHandler) RedirectURL(w http.ResponseWriter, r *http.Request) {
 
 	originalURL, err := h.service.GetOriginalURL(shortCode)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		if errors.Is(err, domain.ErrURLNotFound) {
 			http.Error(w, "URL not found", http.StatusNotFound)
 			return
 		}
@@ -96,7 +113,7 @@ func (h *URLHandler) RedirectURL(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
 
-func (h *URLHandler) GetURLs(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetURLs(w http.ResponseWriter, r *http.Request) {
 	list, err := h.service.GetAllURLS()
 	if err != nil {
 		http.Error(w, "Failed to get URLs", http.StatusInternalServerError)
@@ -106,10 +123,10 @@ func (h *URLHandler) GetURLs(w http.ResponseWriter, r *http.Request) {
 	var urls []URLResponse
 
 	for _, url := range list {
+
 		urls = append(urls, URLResponse{
-			ShortURL:    os.Getenv("BASE_URL") + "/" + url.ShortCode,
+			ShortURL:    h.baseUrl + "/" + url.ShortCode,
 			OriginalURL: url.OriginalURL,
-			CreatedAt:   url.CreatedAt,
 		})
 	}
 

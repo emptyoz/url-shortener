@@ -1,12 +1,18 @@
-.PHONY: migrate-up migrate-down docker-run docker-down
+SHELL := /bin/bash
 
-docker-run:
+.PHONY: up down clean run-tests test migrate-up migrate-down
+
+up:
 	docker compose up --build -d
 
-docker-down:
+down:
 	docker compose down
 
-DB_URL=postgres://postgres:password@localhost:5432/url_shortener?sslmode=disable
+clean:
+	docker compose down -v --remove-orphans
+
+test:
+	go test -v -cover ./...
 
 migrate-up:
 	migrate -path migrations -database "$(DB_URL)" up

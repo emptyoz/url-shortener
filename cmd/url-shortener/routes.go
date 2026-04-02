@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -11,8 +12,16 @@ func (app *application) routes() *mux.Router {
 	r := mux.NewRouter()
 
 	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		res := struct {
+			Status string `json:"status"`
+		}{
+			Status: "OK",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(&res); err != nil {
+			app.log.Error("json endcoder", "error", err)
+		}
 	}).Methods("GET")
 
 	api := r.PathPrefix("/api").Subrouter()

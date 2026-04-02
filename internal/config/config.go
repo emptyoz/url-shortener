@@ -1,69 +1,22 @@
 package config
 
 import (
-	"database/sql"
-	"fmt"
-	"os"
+	"log"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/ilyakaznacheev/cleanenv"
 )
 
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
+type Config struct {
+	SrvAddress string `yaml:"srv_address" env:"SERVER_ADDRESS" end-default:"localhost:8080"`
+	BaseURL    string `yaml:"base_url" env:"BASE_URL" end-default:"localhost:8080"`
+	DBAddress  string `yaml:"db_address" env:"DB_ADDRESS" end-default:"localhost:8080"`
+	RedisURL   string `yaml:"redis_url" env:"REDIS_URL" end-default:"localhost:8080"`
 }
 
-type DatabaseConfig struct {
-	Postgres *PostgresConfig
-	Redis    *RedisConfig
-}
-
-func NewDatabaseConfig() *DatabaseConfig {
-	return &DatabaseConfig{
-		Postgres: NewPostgresConfig(),
-		Redis:    NewRedisConfig(),
+func MustLoad(configPath string) Config {
+	var cfg Config
+	if err := cleanenv.ReadConfig(configPath, &cfg); err != nil {
+		log.Fatalf("cannot read config %q: %s", configPath, err)
 	}
-}
-
-type DatabaseConnections struct {
-	Postgres *sql.DB
-	Redis    *redis.Client
-}
-
-func NewDatabaseConnections(config *DatabaseConfig) (*DatabaseConnections, error) {
-	postgresDB, err := NewPostgresDB(config.Postgres)
-	if err != nil {
-		return nil, fmt.Errorf("postgres: %w", err)
-	}
-
-	redisClient, err := NewRedisClient(config.Redis)
-	if err != nil {
-		postgresDB.Close()
-		return nil, fmt.Errorf("redis: %w", err)
-	}
-
-	return &DatabaseConnections{
-		Postgres: postgresDB,
-		Redis:    redisClient,
-	}, nil
-}
-
-func (dc *DatabaseConnections) Close() error {
-	var errs []error
-
-	if err := dc.Postgres.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("postgres close: %w", err))
-	}
-
-	if err := dc.Redis.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("redis close: %w", err))
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("database connections close errors: %v", errs)
-	}
-
-	return nil
+	return cfg
 }

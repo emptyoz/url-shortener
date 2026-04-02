@@ -36,3 +36,12 @@ cd url-shortener
 # Запуск всех сервисов
 make docker-run
 ```
+
+### Создание короткой ссылки
+```bash
+# Запрос
+curl -X POST -d '{"url":"https://google.com"}' http://localhost:8080/api/shorten
+
+# Ответ
+{"short_url":"http://localhost:8080/l74pSP","original_url":"https://google.com"}
+```

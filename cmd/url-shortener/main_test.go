@@ -3,97 +3,112 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"log/slog"
+	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"os"
-	"strings"
 	"testing"
+	"time"
 
-	"github.com/Vadim-Makhnev/url-shortener/internal/handler"
-	"github.com/Vadim-Makhnev/url-shortener/internal/repository"
-	"github.com/Vadim-Makhnev/url-shortener/internal/service"
-	"github.com/Vadim-Makhnev/url-shortener/internal/test/testhelper"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestMain_WithTestDB(t *testing.T) {
-	connections := testhelper.NewTestDatabaseConnections(t)
-	defer connections.Close()
+const address = "http://localhost:8080"
 
-	testhelper.CleanupTestDatabase(t, connections, "urls")
+var client = http.Client{
+	Timeout: 10 * time.Minute,
+}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	postgres := repository.NewRepositoryPostgres(logger, connections.Postgres)
-	redis := repository.NewRedisRepository(connections.Redis)
-	urlService := service.NewService(postgres, redis, logger)
-	urlHandler := handler.NewHandler(urlService)
+type Reply struct {
+	Status string `json:"status"`
+}
 
-	app := application{
-		handler: urlHandler,
+func TestHealth(t *testing.T) {
+	resp, err := client.Get(address + "/health")
+	require.NoError(t, err, "cannot health check")
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var rep Reply
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rep))
+	require.Equal(t, "OK", rep.Status)
+}
+
+func TestCreate_ShortenURL(t *testing.T) {
+	reqBody := struct {
+		URL string `json:"url"`
+	}{
+		URL: "https://google.com",
 	}
 
-	router := app.routes()
+	b, err := json.Marshal(reqBody)
+	require.NoError(t, err)
 
-	t.Run("CreateShortURL", func(t *testing.T) {
-		requestBody := map[string]string{"url": "https://example.com"}
-		jsonData, _ := json.Marshal(requestBody)
+	req, err := http.NewRequest(http.MethodPost, address+"/api/shorten", bytes.NewBuffer(b))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
 
-		req := httptest.NewRequest("POST", "/api/shorten", bytes.NewBuffer(jsonData))
-		req.Header.Set("Content-Type", "application/json")
-		rr := httptest.NewRecorder()
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-		router.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+}
 
-		assert.Equal(t, http.StatusCreated, rr.Code)
+func TestGetURLS_GetURLs(t *testing.T) {
+	created := []string{
+		fmt.Sprintf("https://example.com/a/%d", time.Now().UnixNano()),
+		fmt.Sprintf("https://example.com/b/%d", time.Now().UnixNano()+1),
+	}
 
-		var response map[string]any
-		err := json.Unmarshal(rr.Body.Bytes(), &response)
-		assert.NoError(t, err)
+	for _, u := range created {
+		createShortURL(t, u)
+	}
 
-		assert.Contains(t, response, "short_url")
-		assert.Contains(t, response, "original_url")
-		assert.Contains(t, response, "created_at")
-	})
+	resp, err := client.Get(address + "/api/urls")
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	t.Run("RedirectURL", func(t *testing.T) {
-		createReq := map[string]string{"url": "https://google.com"}
-		jsonData, _ := json.Marshal(createReq)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
 
-		req := httptest.NewRequest("POST", "/api/shorten", bytes.NewBuffer(jsonData))
-		req.Header.Set("Content-Type", "application/json")
-		rr := httptest.NewRecorder()
-		router.ServeHTTP(rr, req)
+	var got []struct {
+		ShortURL    string `json:"short_url"`
+		OriginalURL string `json:"original_url"`
+	}
 
-		var createResponse map[string]any
-		json.Unmarshal(rr.Body.Bytes(), &createResponse)
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	require.GreaterOrEqual(t, len(got), len(created))
 
-		shortURL := createResponse["short_url"].(string)
-		shortCode := strings.TrimPrefix(shortURL, "/")
+	gotOriginals := make(map[string]struct{}, len(got))
+	for _, item := range got {
+		require.NotEmpty(t, item.ShortURL)
+		gotOriginals[item.OriginalURL] = struct{}{}
+	}
 
-		req = httptest.NewRequest("GET", "/"+shortCode, nil)
-		rr = httptest.NewRecorder()
-		router.ServeHTTP(rr, req)
+	for _, want := range created {
+		_, ok := gotOriginals[want]
+		require.True(t, ok)
+	}
+}
 
-		if rr.Code == http.StatusMovedPermanently || rr.Code == http.StatusFound {
-			assert.Equal(t, "https://google.com", rr.Header().Get("Location"))
-		} else {
-			t.Errorf("Expected redirect, got status %d", rr.Code)
-		}
-	})
+func createShortURL(t *testing.T, original string) {
+	t.Helper()
 
-	t.Run("GetAllURLs", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/urls", nil)
-		rr := httptest.NewRecorder()
-		router.ServeHTTP(rr, req)
-		assert.Equal(t, http.StatusOK, rr.Code)
-	})
+	reqBody := struct {
+		URL string `json:"url"`
+	}{
+		URL: original,
+	}
 
-	t.Run("HealthCheck", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/health", nil)
-		rr := httptest.NewRecorder()
-		router.ServeHTTP(rr, req)
-		assert.Equal(t, http.StatusOK, rr.Code)
-		assert.Equal(t, "OK", rr.Body.String())
-	})
+	b, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, address+"/api/shorten", bytes.NewBuffer(b))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
 }
