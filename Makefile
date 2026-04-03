@@ -8,11 +8,19 @@ up:
 down:
 	docker compose down
 
+run-tests:
+	docker run --rm --network=host tests:latest
+
 clean:
-	docker compose down -v --remove-orphans
+	docker compose down -v
 
 test:
-	go test -v -cover ./...
+	make clean
+	make up
+	@echo wait cluster to start && sleep 10
+	make run-tests
+	make clean
+	@echo "test finished"
 
 migrate-up:
 	migrate -path migrations -database "$(DB_URL)" up

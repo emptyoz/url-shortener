@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/Vadim-Makhnev/url-shortener/internal/domain"
 	"github.com/Vadim-Makhnev/url-shortener/internal/metrics"
@@ -13,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+//go:generate mockery --name URLService --dir . --output mocks --outpkg mocks --with-expecter
 type URLService interface {
 	ShortenURL(originalURL string) (*domain.URL, error)
 	GetOriginalURL(shortCode string) (string, error)
@@ -55,7 +57,7 @@ func (h *Handler) ShortenURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.URL == "" {
+	if strings.TrimSpace(req.URL) == "" {
 		http.Error(w, "URL is required", http.StatusBadRequest)
 		return
 	}

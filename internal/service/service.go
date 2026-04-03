@@ -17,12 +17,14 @@ var (
 	defaultTimeout = 5 * time.Second
 )
 
+//go:generate mockery --name RepositoryPostgres --dir . --output mocks --outpkg mocks --with-expecter
 type RepositoryPostgres interface {
 	CreateURL(shortCode, originalURL string) (*domain.URL, error)
 	GetURLByShortCode(shortCode string) (string, error)
 	GetAllURLS() ([]domain.URL, error)
 }
 
+//go:generate mockery --name RepositoryRedis --dir . --output mocks --outpkg mocks --with-expecter
 type RepositoryRedis interface {
 	Set(ctx context.Context, shortCode, originalURL string) error
 	Get(ctx context.Context, shortCode string) (string, error)

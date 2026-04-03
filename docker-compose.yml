@@ -17,6 +17,13 @@ services:
     networks:
       - app-network
 
+  tests:
+    image: tests:latest
+    build: tests
+    container_name: tests
+    restart: "no"
+    entrypoint: "true"
+
   postgres:
     image: postgres:15-alpine
     environment:
