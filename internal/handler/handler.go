@@ -10,7 +10,6 @@ import (
 
 	"github.com/Vadim-Makhnev/url-shortener/internal/domain"
 	"github.com/Vadim-Makhnev/url-shortener/internal/metrics"
-	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -95,8 +94,7 @@ func (h *Handler) RedirectURL(w http.ResponseWriter, r *http.Request) {
 	timer := prometheus.NewTimer(metrics.RequestDuration)
 	defer timer.ObserveDuration()
 
-	vars := mux.Vars(r)
-	shortCode := vars["shortCode"]
+	shortCode := r.PathValue("shortCode")
 
 	originalURL, err := h.service.GetOriginalURL(shortCode)
 	if err != nil {

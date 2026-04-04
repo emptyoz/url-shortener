@@ -26,9 +26,9 @@ func (app *application) routes() http.Handler {
 	r.HandleFunc("POST /api/shorten", app.handler.ShortenURL)
 	r.HandleFunc("GET /api/urls", app.handler.GetURLs)
 
-	r.HandleFunc("GET /{shortCode}", app.handler.RedirectURL)
-
 	r.Handle("GET /metrics", promhttp.Handler())
+
+	r.HandleFunc("GET /{shortCode}", app.handler.RedirectURL)
 
 	return r
 }
