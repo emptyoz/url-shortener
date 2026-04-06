@@ -30,12 +30,14 @@ func main() {
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
+	// storage
 	storage, err := repository.NewPostgreSQL(log, cfg.DBAddress)
 	if err != nil {
 		log.Error("connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 
+	// cache
 	cache, err := repository.NewRedis(log, cfg.RedisURL)
 	if err != nil {
 		log.Error("connect to Redis", "error", err)
@@ -45,6 +47,7 @@ func main() {
 	urlService := service.NewService(log, storage, cache)
 	urlHandler := handler.NewHandler(log, urlService, cfg.BaseURL)
 
+	// application
 	app := application{
 		log:     log,
 		handler: urlHandler,

@@ -88,7 +88,7 @@ func (s *URLService) GetOriginalURL(shortCode string) (string, error) {
 		return val, nil
 	}
 	if !errors.Is(err, repository.ErrNotFound) {
-		s.logger.Warn("GetOriginalURL cache get", "short_code", shortCode, "error", err)
+		s.logger.Error("GetOriginalURL cache get", "short_code", shortCode, "error", err)
 	}
 
 	url, err := s.postgres.GetURLByShortCode(shortCode)
